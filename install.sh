@@ -1,61 +1,55 @@
-import os, sqlite3
-from flask import Flask, render_template, request, redirect
-from flask_httpauth import HTTPBasicAuth
+#!/bin/bash
+# Smart Ultimate Installer - rima0222
+REPO="https://raw.githubusercontent.com/rima0222/AdminPanel/main"
 
-app = Flask(__name__)
-auth = HTTPBasicAuth()
-USER_DATA = {"admin": "SmartPass123"}
+echo "🧹 در حال پاکسازی نسخه‌های قبلی..."
+systemctl stop smart-panel 2>/dev/null
+rm -f /root/panel.py /root/core.sh /root/users.db install.sh*
+sleep 3
 
-@auth.verify_password
-def verify(username, password):
-    if username in USER_DATA and USER_DATA[username] == password:
-        return username
+echo "📦 نصب پکیج‌های سیستم و پایتون..."
+apt update && apt install -y python3-flask python3-flask-httpauth sqlite3 vnstat ssmtp mailutils screen curl tar
+sleep 5
 
-def db_exec(query, args=()):
-    conn = sqlite3.connect('/root/users.db')
-    conn.row_factory = sqlite3.Row
-    cur = conn.execute(query, args)
-    res = cur.fetchall()
-    conn.commit()
-    conn.close()
-    return res
+echo "📂 دریافت فایل‌های اصلی از گیت‌هاب..."
+wget -q -O /root/core.sh "$REPO/core.sh" && chmod +x /root/core.sh
+sleep 2
+wget -q -O /root/panel.py "$REPO/panel.py"
+sleep 2
 
-@app.route('/')
-@auth.login_required
-def index():
-    users = db_exec('SELECT * FROM users')
-    online = os.popen("who | awk '{print $1}'").read().split()
-    return render_template('index.html', users=users, online=online)
+echo "🗄️ ایجاد ساختار نهایی دیتابیس..."
+sqlite3 /root/users.db "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, password TEXT, limit_login INTEGER, protocol TEXT, status TEXT);"
+sqlite3 /root/users.db "CREATE TABLE IF NOT EXISTS admin_config (username TEXT, password TEXT);"
+# تنظیم یوزر پسورد اولیه پنل
+sqlite3 /root/users.db "INSERT INTO admin_config (username, password) SELECT 'admin', 'SmartPass123' WHERE NOT EXISTS (SELECT 1 FROM admin_config);"
+sleep 3
 
-@app.route('/add', methods=['POST'])
-@auth.login_required
-def add_user():
-    user = request.form['username']
-    pwd = request.form['password']
-    proto = request.form['protocol']
-    # ساخت کاربر در لینوکس
-    os.system(f"useradd -m -s /bin/bash {user} && echo '{user}:{pwd}' | chpasswd")
-    # ذخیره در دیتابیس
-    db_exec('INSERT INTO users (username, password, protocol, status) VALUES (?, ?, ?, ?)', 
-            (user, pwd, proto, 'active'))
-    return redirect('/')
+echo "🎨 تنظیم قالب گرافیکی..."
+mkdir -p /root/templates
+wget -q -O /root/templates/index.html "$REPO/templates/index.html"
+sleep 3
 
-@app.route('/delete/<username>')
-@auth.login_required
-def delete_user(username):
-    os.system(f"userdel -r {username}")
-    db_exec('DELETE FROM users WHERE username = ?', (username,))
-    return redirect('/')
+echo "🚀 پیکربندی سرویس و فایروال..."
+ufw allow 5000/tcp
+cat <<EOF > /etc/systemd/system/smart-panel.service
+[Unit]
+Description=Smart SSH Web Panel
+After=network.target
+[Service]
+WorkingDirectory=/root
+ExecStart=/usr/bin/python3 /root/panel.py
+Restart=always
+User=root
+[Install]
+WantedBy=multi-user.target
+EOF
 
-@app.route('/config_email', methods=['POST'])
-@auth.login_required
-def config_email():
-    email = request.form['email']
-    app_pass = request.form['app_pass']
-    conf = f"root={email}\nmailhub=smtp.gmail.com:587\nAuthUser={email}\nAuthPass={app_pass}\nUseSTARTTLS=YES\n"
-    with open("/etc/ssmtp/ssmtp.conf", "w") as f: f.write(conf)
-    return "✅ ایمیل تنظیم شد!"
+systemctl daemon-reload
+systemctl enable smart-panel
+systemctl restart smart-panel
+sleep 5
 
-if __name__ == '__main__':
-    os.system("screen -dmS monitor bash /root/core.sh monitor")
-    app.run(host='0.0.0.0', port=5000)
+echo "----------------------------------------"
+echo "✅ نصب با موفقیت کامل شد!"
+echo "🌐 آدرس پنل: http://$(curl -s https://api.ipify.org):5000"
+echo "----------------------------------------"
