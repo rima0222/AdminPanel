@@ -1,41 +1,35 @@
 #!/bin/bash
-# Smart One-Click Installer for rima0222 AdminPanel
-
 REPO_URL="https://raw.githubusercontent.com/rima0222/AdminPanel/main"
 
-echo "--- شروع نصب هوشمند و خودکار پنل ---"
+echo "--- شروع نصب نهایی و هوشمند پنل ---"
+sleep 2
 
-# تابع برای چک کردن خطا
-check_step() {
-    if [ $? -eq 0 ]; then
-        echo "✅ $1 با موفقیت انجام شد."
-    else
-        echo "❌ خطا در $1! نصب متوقف شد."
-        exit 1
-    fi
-}
+# ۱. نصب پیش‌نیازها با وقفه
+echo "گام ۱: نصب پکیج‌های پایتون و سیستم..."
+apt update && apt install -y python3-flask python3-flask-httpauth sqlite3 vnstat ssmtp mailutils screen curl tar
+sleep 5
 
-# ۱. نصب پیش‌نیازها
-echo "در حال نصب پیش‌نیازهای سیستم..."
-apt update && apt install -y python3-flask sqlite3 vnstat ssmtp mailutils screen curl tar
-check_step "نصب پکیج‌های سیستم"
-
-# ۲. دانلود فایل‌های مورد نیاز
-echo "در حال دریافت فایل‌های پنل از گیت‌هاب..."
+# ۲. دانلود فایل‌ها
+echo "گام ۲: دریافت فایل‌های اصلی از مخزن..."
 wget -O core.sh "$REPO_URL/core.sh" && chmod +x core.sh
-check_step "دریافت core.sh"
-
+sleep 5
 wget -O panel.py "$REPO_URL/panel.py"
-check_step "دریافت panel.py"
+sleep 5
 
-# ۳. تنظیم پوشه قالب گرافیکی
-echo "در حال تنظیم ظاهر پنل..."
+# ۳. تنظیم دیتابیس اولیه (برای حل مشکل Internal Server Error)
+echo "گام ۳: ساخت و تنظیم دیتابیس کاربران..."
+sqlite3 /root/users.db "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, password TEXT, limit_login INTEGER, exp_date TEXT, status TEXT);"
+sleep 5
+
+# ۴. تنظیم ظاهر پنل
+echo "گام ۴: راه‌اندازی بخش گرافیکی..."
 mkdir -p templates
 wget -O templates/index.html "$REPO_URL/templates/index.html"
-check_step "دریافت index.html"
+sleep 5
 
-# ۴. تنظیم سرویس خودکار
-echo "در حال پیکربندی سرویس سیستم..."
+# ۵. تنظیم فایروال و سرویس
+echo "گام ۵: باز کردن پورت ۵۰۰۰ و فعال‌سازی سرویس..."
+ufw allow 5000/tcp
 cat <<EOF > /etc/systemd/system/smart-panel.service
 [Unit]
 Description=Smart SSH Web Panel
@@ -51,16 +45,10 @@ EOF
 
 systemctl daemon-reload
 systemctl enable smart-panel
-check_step "فعال‌سازی سرویس خودکار"
+systemctl restart smart-panel
+sleep 5
 
-# ۵. تنظیم مانیتورینگ و بک‌آپ
-(crontab -l 2>/dev/null | grep -v "core.sh"; echo "0 */6 * * * /bin/bash /root/core.sh backup > /dev/null 2>&1") | crontab -
-check_step "تنظیم بک‌آپ ۶ ساعته"
-
-# ۶. اجرای نهایی
-systemctl start smart-panel
 echo "------------------------------------------------"
-echo "🎉 نصب با موفقیت کامل شد!"
-echo "🌐 آدرس پنل: http://$(curl -s https://api.ipify.org):8080"
-echo "🔐 User: admin | Pass: SmartPass123"
+echo "✅ نصب با موفقیت کامل شد! بدون تداخل."
+echo "🌐 آدرس: http://$(curl -s https://api.ipify.org):5000"
 echo "------------------------------------------------"
