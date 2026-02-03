@@ -1,54 +1,32 @@
-#!/bin/bash
-REPO_URL="https://raw.githubusercontent.com/rima0222/AdminPanel/main"
+from flask import Flask, render_template, request
+from flask_httpauth import HTTPBasicAuth
+import sqlite3, os
 
-echo "--- شروع نصب نهایی و هوشمند پنل ---"
-sleep 2
+app = Flask(__name__)
+auth = HTTPBasicAuth()
 
-# ۱. نصب پیش‌نیازها با وقفه
-echo "گام ۱: نصب پکیج‌های پایتون و سیستم..."
-apt update && apt install -y python3-flask python3-flask-httpauth sqlite3 vnstat ssmtp mailutils screen curl tar
-sleep 5
+USER_DATA = {"admin": "SmartPass123"}
 
-# ۲. دانلود فایل‌ها
-echo "گام ۲: دریافت فایل‌های اصلی از مخزن..."
-wget -O core.sh "$REPO_URL/core.sh" && chmod +x core.sh
-sleep 5
-wget -O panel.py "$REPO_URL/panel.py"
-sleep 5
+@auth.verify_password
+def verify(username, password):
+    if username in USER_DATA and USER_DATA[username] == password:
+        return username
 
-# ۳. تنظیم دیتابیس اولیه (برای حل مشکل Internal Server Error)
-echo "گام ۳: ساخت و تنظیم دیتابیس کاربران..."
-sqlite3 /root/users.db "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, password TEXT, limit_login INTEGER, exp_date TEXT, status TEXT);"
-sleep 5
+@app.route('/')
+@auth.login_required
+def index():
+    try:
+        conn = sqlite3.connect('/root/users.db')
+        conn.row_factory = sqlite3.Row
+        users = conn.execute('SELECT * FROM users').fetchall()
+    except:
+        users = [] # اگر جدولی نبود، لیست خالی نشان بده
+    
+    online = os.popen("who | awk '{print $1}'").read().split()
+    cpu = os.popen("top -bn1 | grep 'Cpu(s)' | awk '{print $2}'").read().strip()
+    return render_template('index.html', users=users, online=online, cpu=cpu)
 
-# ۴. تنظیم ظاهر پنل
-echo "گام ۴: راه‌اندازی بخش گرافیکی..."
-mkdir -p templates
-wget -O templates/index.html "$REPO_URL/templates/index.html"
-sleep 5
-
-# ۵. تنظیم فایروال و سرویس
-echo "گام ۵: باز کردن پورت ۵۰۰۰ و فعال‌سازی سرویس..."
-ufw allow 5000/tcp
-cat <<EOF > /etc/systemd/system/smart-panel.service
-[Unit]
-Description=Smart SSH Web Panel
-After=network.target
-[Service]
-WorkingDirectory=/root
-ExecStart=/usr/bin/python3 /root/panel.py
-Restart=always
-User=root
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable smart-panel
-systemctl restart smart-panel
-sleep 5
-
-echo "------------------------------------------------"
-echo "✅ نصب با موفقیت کامل شد! بدون تداخل."
-echo "🌐 آدرس: http://$(curl -s https://api.ipify.org):5000"
-echo "------------------------------------------------"
+if __name__ == '__main__':
+    # اجرای مانیتورینگ در پس‌زمینه
+    os.system("screen -dmS smart_monitor bash /root/core.sh monitor")
+    app.run(host='0.0.0.0', port=5000)
