@@ -29,11 +29,8 @@ def index():
     for u in users_raw:
         c_date = datetime.strptime(u['created_at'], '%Y-%m-%d')
         days_left = max(0, 30 - (datetime.now() - c_date).days)
-        
         # محاسبه حجم باقی‌مانده از ۴۰ گیگ
-        current_usage = u.get('used_traffic', 0) # بر حسب گیگابایت
-        rem_traffic = max(0, 40 - current_usage)
-        
+        rem_traffic = max(0, 40 - (u['used_traffic'] or 0))
         u_dict = dict(u)
         u_dict['days_left'] = days_left
         u_dict['rem_traffic'] = f"{rem_traffic:.2f} GB"
@@ -46,29 +43,18 @@ def download_npv(u_name):
     user = db_exec("SELECT * FROM users WHERE username=?", (u_name,), True)
     ip = os.popen("curl -s https://api.ipify.org").read().strip()
     
-    # ساختار استاندارد NPV برای NapsternetV
-    npv_config = {
-        "v": "2",
-        "ps": f"{u_name}_{user['protocol']}",
-        "add": ip,
-        "port": "22",
-        "id": u_name,
-        "aid": "0",
-        "net": "tcp" if user['protocol'] == "SSH" else "ws",
-        "type": "none",
-        "host": "",
-        "path": "/ssh" if user['protocol'] == "WS" else "",
-        "tls": "none",
-        "sni": "",
-        "password": user['password']
+    # ساختار استاندارد JSON برای NapsternetV
+    config_data = {
+        "v": "2", "ps": f"{u_name}_{user['protocol']}",
+        "add": ip, "port": "22", "id": u_name,
+        "net": "tcp" if user['protocol'] != "WS" else "ws",
+        "type": "none", "host": "", "path": "/ssh" if user['protocol'] == "WS" else "",
+        "tls": "none", "password": user['password']
     }
-    
-    # تبدیل به فرمت JSON و سپس Base64 برای ولید شدن در برنامه
-    json_str = json.dumps(npv_config)
-    encoded_config = base64.b64encode(json_str.encode()).decode()
-    
+    # تبدیل به Base64 برای ولید شدن در برنامه
+    encoded = base64.b64encode(json.dumps(config_data).encode()).decode()
     path = f"/tmp/{u_name}.npv"
-    with open(path, "w") as f: f.write("npv://" + encoded_config)
+    with open(path, "w") as f: f.write("npv://" + encoded)
     return send_file(path, as_attachment=True, download_name=f"{u_name}.npv")
 
 @app.route('/add', methods=['POST'])
@@ -87,9 +73,24 @@ def restore():
     file = request.files['file']
     if file:
         file.save('/root/users.db')
-        # بعد از ریستور، همگام‌سازی کاربران با سیستم لینوکس انجام شود
         os.system("sqlite3 /root/users.db 'SELECT username, password FROM users;' | while read -r row; do u=$(echo $row | cut -d'|' -f1); p=$(echo $row | cut -d'|' -f2); id $u &>/dev/null || (useradd -m -s /bin/bash $u && echo $u:$p | chpasswd); done")
         os.system("systemctl restart smart-panel")
     return redirect('/')
 
-# سایر توابع (login, logout, backup) مشابه قبل باقی می‌مانند
+@app.route('/backup')
+@login_required
+def backup(): return send_file('/root/users.db', as_attachment=True)
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        u, p = request.form['username'], request.form['password']
+        if db_exec("SELECT * FROM admin_config WHERE username=? AND password=?", (u, p), True):
+            session['logged_in'] = True; return redirect(url_for('index'))
+    return render_template('login.html')
+
+@app.route('/logout')
+def logout(): session.pop('logged_in', None); return redirect('/login')
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
