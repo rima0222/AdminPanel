@@ -1,18 +1,16 @@
 #!/bin/bash
-# Smart Guardian - rima0222
+# Smart Guardian - Anti Multi-Login
 
-case "$1" in
-    monitor)
-        while true; do
-            # در اینجا کد Anti-Multi Login قرار می‌گیرد
-            sleep 20
-        done
-        ;;
-    backup)
-        # ارسال بک‌آپ به ایمیلی که در پنل ست کردید
-        EMAIL=$(grep "root=" /etc/ssmtp/ssmtp.conf | cut -d= -f2)
-        if [ ! -z "$EMAIL" ]; then
-            echo "Backup of SSH Users Database" | mail -s "SSH Backup $(date)" -A /root/users.db $EMAIL
+while true; do
+    sqlite3 /root/users.db "SELECT username, limit_login FROM users;" | while read -r row; do
+        u=$(echo "$row" | cut -d'|' -f1)
+        lim=$(echo "$row" | cut -d'|' -f2)
+        [ -z "$lim" ] && lim=1
+        
+        count=$(ps -u "$u" | grep sshd | wc -l)
+        if [ "$count" -gt "$lim" ]; then
+            pkill -u "$u" -old
         fi
-        ;;
-esac
+    done
+    sleep 20
+done
