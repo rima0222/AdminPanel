@@ -32,7 +32,7 @@ def index():
         rem_traffic = max(0, 40 - (u['used_traffic'] or 0))
         u_dict = dict(u)
         u_dict['days_left'] = days_left
-        u_dict['rem_traffic'] = f"{rem_traffic:.2f} GB"
+        u_dict['rem_traffic'] = f"{rem_traffic:.2f}"
         users.append(u_dict)
     return render_template('index.html', users=users, online=online)
 
@@ -42,24 +42,31 @@ def download_npvt(u_name):
     user = db_exec("SELECT * FROM users WHERE username=?", (u_name,), True)
     ip = os.popen("curl -s https://api.ipify.org").read().strip()
     
-    # ساختار استاندارد NPVT برای NapsternetV
+    # ساختار فوق‌دقیق برای ولید شدن در NapsternetV
     config_dict = {
+        "configVersion": 1,
         "name": f"{u_name}_{user['protocol']}",
         "type": "ssh",
         "host": ip,
         "port": 22,
         "username": u_name,
         "password": user['password'],
+        "sni": "",
         "udp": True,
-        "settings": {
-            "is_ws": True if user['protocol'] == "WS" else False,
-            "ws_path": "/ssh" if user['protocol'] == "WS" else "",
-            "ws_host": ip
-        }
+        "udpgw": "7300",
+        "isWS": True if user['protocol'] == "WS" else False,
+        "wsPath": "/ssh" if user['protocol'] == "WS" else "",
+        "wsHost": ip
     }
-    encoded = base64.b64encode(json.dumps(config_dict).encode()).decode()
+    
+    # تبدیل به Base64 (فقط متن کدگذاری شده بدون پیشوند)
+    json_str = json.dumps(config_dict)
+    encoded_config = base64.b64encode(json_str.encode()).decode()
+    
     path = f"/tmp/{u_name}.npvt"
-    with open(path, "w") as f: f.write(encoded)
+    with open(path, "w") as f:
+        f.write(encoded_config)
+        
     return send_file(path, as_attachment=True, download_name=f"{u_name}.npvt")
 
 @app.route('/add', methods=['POST'])
@@ -67,6 +74,7 @@ def download_npvt(u_name):
 def add():
     u, p, pr, em = request.form['username'], request.form['password'], request.form['protocol'], request.form['user_email']
     lim = request.form.get('limit_login', 1)
+    # ساخت کاربر با دسترسی کامل برای اتصال دستی
     os.system(f"useradd -m -s /bin/bash {u} && echo '{u}:{p}' | chpasswd")
     db_exec('INSERT INTO users (username, password, protocol, user_email, limit_login, used_traffic, status) VALUES (?,?,?,?,?,?,?)', 
             (u, p, pr, em, lim, 0, 'active'))
