@@ -29,7 +29,6 @@ def index():
     for u in users_raw:
         c_date = datetime.strptime(u['created_at'], '%Y-%m-%d')
         days_left = max(0, 30 - (datetime.now() - c_date).days)
-        # محاسبه حجم باقی‌مانده از ۴۰ گیگ
         rem_traffic = max(0, 40 - (u['used_traffic'] or 0))
         u_dict = dict(u)
         u_dict['days_left'] = days_left
@@ -37,25 +36,31 @@ def index():
         users.append(u_dict)
     return render_template('index.html', users=users, online=online)
 
-@app.route('/download_npv/<u_name>')
+@app.route('/download_npvt/<u_name>')
 @login_required
-def download_npv(u_name):
+def download_npvt(u_name):
     user = db_exec("SELECT * FROM users WHERE username=?", (u_name,), True)
     ip = os.popen("curl -s https://api.ipify.org").read().strip()
     
-    # ساختار استاندارد JSON برای NapsternetV
-    config_data = {
-        "v": "2", "ps": f"{u_name}_{user['protocol']}",
-        "add": ip, "port": "22", "id": u_name,
-        "net": "tcp" if user['protocol'] != "WS" else "ws",
-        "type": "none", "host": "", "path": "/ssh" if user['protocol'] == "WS" else "",
-        "tls": "none", "password": user['password']
+    # ساختار استاندارد NPVT برای NapsternetV
+    config_dict = {
+        "name": f"{u_name}_{user['protocol']}",
+        "type": "ssh",
+        "host": ip,
+        "port": 22,
+        "username": u_name,
+        "password": user['password'],
+        "udp": True,
+        "settings": {
+            "is_ws": True if user['protocol'] == "WS" else False,
+            "ws_path": "/ssh" if user['protocol'] == "WS" else "",
+            "ws_host": ip
+        }
     }
-    # تبدیل به Base64 برای ولید شدن در برنامه
-    encoded = base64.b64encode(json.dumps(config_data).encode()).decode()
-    path = f"/tmp/{u_name}.npv"
-    with open(path, "w") as f: f.write("npv://" + encoded)
-    return send_file(path, as_attachment=True, download_name=f"{u_name}.npv")
+    encoded = base64.b64encode(json.dumps(config_dict).encode()).decode()
+    path = f"/tmp/{u_name}.npvt"
+    with open(path, "w") as f: f.write(encoded)
+    return send_file(path, as_attachment=True, download_name=f"{u_name}.npvt")
 
 @app.route('/add', methods=['POST'])
 @login_required
@@ -70,9 +75,9 @@ def add():
 @app.route('/restore', methods=['POST'])
 @login_required
 def restore():
-    file = request.files['file']
-    if file:
-        file.save('/root/users.db')
+    f = request.files['file']
+    if f:
+        f.save('/root/users.db')
         os.system("sqlite3 /root/users.db 'SELECT username, password FROM users;' | while read -r row; do u=$(echo $row | cut -d'|' -f1); p=$(echo $row | cut -d'|' -f2); id $u &>/dev/null || (useradd -m -s /bin/bash $u && echo $u:$p | chpasswd); done")
         os.system("systemctl restart smart-panel")
     return redirect('/')
